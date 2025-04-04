@@ -1,9 +1,7 @@
 Future Improvements
 
-1 -    Replace SHA-256 with SHA-512 throughout the entire program.
+1 -    Compress a single TXT file using ZSTD, with SHA-512 verification (parameter: compress).
 
-2 -    Compress a single TXT file using ZSTD, with SHA-512 verification (parameter: compress).
+2 -    Compress the "Diary" directory into a TAR archive, applying ZSTD compression and SHA-512 verification (parameter: compress).
 
-3 -    Compress the "Diary" directory into a TAR archive, applying ZSTD compression and SHA-512 verification (parameter: compress).
-
-4 -    Implement decompression functionality for files or directories, with the program verifying SHA-512 before extracting (parameter: decompress).
+3 -    Implement decompression functionality for files or directories, with the program verifying SHA-512 before extracting (parameter: decompress).
