@@ -3,14 +3,14 @@
 # diary.sh
 #
 # A secure, professional ("NASA-level") shell script to manage plain-text diary
-# entries with the ".txt" extension. Each entry is hashed with SHA-256, and all
+# entries with the ".txt" extension. Each entry is hashed with SHA-512, and all
 # actions are logged in a robust CSV file. The script enforces UTF-8 encoding,
 # normalizes line endings to LF, and carefully checks that each file ends in
 # ".txt".
 #
 # Features:
 #   - Logs file size (bytes) immediately after the filename.
-#   - SHA-256 hash is logged as the final column in the CSV.
+#   - SHA-512 hash is logged as the final column in the CSV.
 #   - "search <pattern>" to find words in all .txt files (case-insensitive).
 #   - "audit [objective]" to check integrity of all entries at once (hash match).
 #   - "stats" to show total files, total size, and creation dates from logs.
@@ -19,7 +19,7 @@
 # Commands:
 #   create <filename.txt>             Create a new diary entry.
 #   edit <filename.txt>               Edit an existing entry.
-#   check <filename.txt>              Verify the SHA-256 hash of an entry.
+#   check <filename.txt>              Verify the SHA-512 hash of an entry.
 #   backup <filename.txt>             Backup an entry to Diary/backup.
 #   update <filename.txt>             Re-hash an entry changed outside the script.
 #   update <oldname.txt> <newname.txt> Rename and re-hash an entry.
@@ -86,14 +86,14 @@ fi
 
 HASH_CMD=""
 HASH_PARSE=""
-if command -v sha256sum >/dev/null 2>&1; then
-  HASH_CMD="sha256sum"
+if command -v sha512sum >/dev/null 2>&1; then
+  HASH_CMD="sha512sum"
   HASH_PARSE="cut -d ' ' -f1"
 elif command -v openssl >/dev/null 2>&1; then
-  HASH_CMD="openssl dgst -sha256"
+  HASH_CMD="openssl dgst -sha512"
   HASH_PARSE="sed 's/^.*= //'"
 else
-  echo "Error: Neither sha256sum nor openssl is available on this system." >&2
+  echo "Error: Neither sha512sum nor openssl is available on this system." >&2
   exit 1
 fi
 
@@ -126,7 +126,7 @@ Usage: $0 <command> [arguments]
 Commands:
   create <filename.txt>                Create a new diary entry (must end in .txt).
   edit <filename.txt>                  Edit an existing diary entry.
-  check <filename.txt>                 Verify the SHA-256 hash of an existing entry.
+  check <filename.txt>                 Verify the SHA-512 hash of an existing entry.
   backup <filename.txt>                Backup an entry to the Diary/backup directory.
   update <filename.txt>                Re-hash a file changed outside the script.
   update <oldname.txt> <newname.txt>   Rename and re-hash a file changed outside the script.
@@ -169,7 +169,7 @@ log_action() {
   echo "\"${timestamp}\",\"${1}\",\"${2}\",\"${3}\",\"${4}\",\"${5}\"" >> "${LOG_FILE}"
 }
 
-# Compute SHA-256 hash of a file, capturing just the hash value.
+# Compute SHA-512 hash of a file, capturing just the hash value.
 compute_hash() {
   file="$1"
   hash_value="$(${HASH_CMD} "${file}" 2>/dev/null | eval "${HASH_PARSE}")"
@@ -230,7 +230,7 @@ create_entry() {
   log_action "CREATE" "${filename}" "${filesize}" "" "${hash_value}"
 
   echo "Created new entry: ${filename}"
-  echo "SHA-256: ${hash_value}"
+  echo "SHA-512: ${hash_value}"
   echo "File size (bytes): ${filesize}"
 }
 
@@ -250,7 +250,7 @@ edit_entry() {
   log_action "EDIT" "${filename}" "${filesize}" "" "${hash_value}"
 
   echo "Entry edited: ${filename}"
-  echo "New SHA-256: ${hash_value}"
+  echo "New SHA-512: ${hash_value}"
   echo "File size (bytes): ${filesize}"
 }
 
@@ -271,14 +271,14 @@ check_entry() {
 
   if [ -z "${last_logged_hash}" ]; then
     echo "Warning: No previous hash found in log for '${filename}'."
-    echo "Current SHA-256: ${current_hash}"
+    echo "Current SHA-512: ${current_hash}"
   else
     if [ "${current_hash}" = "${last_logged_hash}" ]; then
       echo "Integrity OK: Current hash matches the last logged hash."
-      echo "SHA-256: ${current_hash}"
+      echo "SHA-512: ${current_hash}"
     else
       echo "WARNING: Hash mismatch detected!"
-      echo "Current SHA-256:  ${current_hash}"
+      echo "Current SHA-512:  ${current_hash}"
       echo "Last logged hash: ${last_logged_hash}"
     fi
   fi
@@ -306,7 +306,7 @@ backup_entry() {
     log_action "BACKUP" "${filename}" "${backup_size}" "" "${hash_copy}"
 
     echo "Backup successful: ${dst_path}"
-    echo "SHA-256: ${hash_copy}"
+    echo "SHA-512: ${hash_copy}"
     echo "Backup file size (bytes): ${backup_size}"
   else
     echo "ERROR: Backup verification failed! The copied file's hash differs."
