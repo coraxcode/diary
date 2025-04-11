@@ -74,7 +74,7 @@
 # For enhanced security when compressing files, we recommend using a password-protected compression method. To achieve this, execute the following commands:
 #
 # To compress the files with password protection:
-# 7z a -t7z -mhe=on -pYOUR_PASSWORD archives_secure.7z archives/
+# 7z a -t7z -mhe=on -p archives_secure.7z archives/
 #
 # To extract the compressed archive:
 # 7z x archive_secure.7z
