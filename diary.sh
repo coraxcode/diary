@@ -260,7 +260,7 @@ decrypt_entry() {
   stty echo
   printf "\n"
   output_file="${ENTRIES_DIR}/${filename}"
-  gpg --batch --yes --passphrase "$passw" --pinentry-mode loopback -o "${output_file}" -d "${encrypted_file}"
+  gpg --batch --yes --passphrase "${passw}" --pinentry-mode loopback -o "${output_file}" -d "${encrypted_file}"
   if [ $? -ne 0 ]; then
     echo "Error: Decryption failed. Bad session key or incorrect passphrase." >&2
     unset passw
