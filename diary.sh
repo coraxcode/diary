@@ -15,27 +15,35 @@
 #   - SHA-512 hash is logged as the final column in the CSV.
 #   - "search <pattern>" to find words in all .txt files (case-insensitive).
 #   - "audit [objective]" to check integrity of all entries at once (hash match).
-#   - "stats" to show total files, total size, and creation dates from logs.
+#   - "stats" to show total file count, total size, and creation dates from logs.
 #   - "logs" to view the diary log (CSV) in a secure, read-only manner.
-#   - "compress [archive_file]" to compress the Diary directory with tar & ZSTD;
-#       produces an archive and a corresponding SHA-512 hash file.
+#   - "compress [archive_file]" to compress the Diary directory using tar & ZSTD;
+#       Produces an archive and a corresponding SHA-512 hash file.
 #   - "decompress <archive_file>" to verify and decompress the provided Diary archive.
+#   - "rename <oldname.txt> <newname.txt>" to rename and re-hash an entry.
+#   - "delete <filename.txt>" to securely delete a diary entry (confirmation required).
+#   - "encrypt <filename.txt>" to encrypt a diary entry using GPG.
+#   - "decrypt <filename.txt>" to decrypt a diary entry using GPG.
+#   - "update <filename.txt>" to re-hash a file changed outside the script.
+#   - "updateall" to update (re-hash) all .txt diary entries.
 #
 # Commands:
 #   create <filename.txt>             Create a new diary entry.
 #   edit <filename.txt>               Edit an existing diary entry.
 #   check <filename.txt>              Verify the SHA-512 hash of an entry.
-#   backup <filename.txt>             Backup an entry to Diary/backup.
-#   update <filename.txt>             Re-hash an entry changed outside the script.
-#   update <oldname.txt> <newname.txt>  Rename and re-hash an entry.
+#   backup <filename.txt>             Backup an entry to the Diary/backup directory.
+#   update <filename.txt>             Re-hash a file changed outside the script.
+#   rename <oldname.txt> <newname.txt>  Rename and re-hash an entry.
 #   search <pattern>                  Search all .txt entries (case-insensitive).
 #   audit [objective]                 Verify integrity of all .txt files at once.
 #   stats                             Show total file count, total size, and creation dates.
 #   logs                              View the diary log (CSV).
-#   compress [archive_file]           Compress the entire Diary directory using tar &
-#                                     ZSTD; produces an archive and a corresponding
-#                                     SHA-512 hash file.
+#   compress [archive_file]           Compress the entire Diary directory using tar & ZSTD.
 #   decompress <archive_file>         Verify and decompress the provided Diary archive.
+#   delete <filename.txt>             Securely delete a diary entry (confirmation required).
+#   encrypt <filename.txt>            Encrypt a diary entry using GPG.
+#   decrypt <filename.txt>            Decrypt a diary entry using GPG.
+#   updateall                         Update (re-hash) all .txt diary entries.
 #   help                              Show this help message.
 #
 # Example usage:
@@ -44,13 +52,17 @@
 #   ./diary.sh check daily_notes.txt
 #   ./diary.sh backup daily_notes.txt
 #   ./diary.sh update daily_notes.txt
-#   ./diary.sh update oldname.txt newname.txt
+#   ./diary.sh rename oldname.txt newname.txt
 #   ./diary.sh search "urgent"
 #   ./diary.sh audit "Nightly check"
 #   ./diary.sh stats
 #   ./diary.sh logs
 #   ./diary.sh compress [optional_archive_name.tar.zst]
 #   ./diary.sh decompress archive_name.tar.zst
+#   ./diary.sh delete daily_notes.txt
+#   ./diary.sh encrypt daily_notes.txt
+#   ./diary.sh decrypt daily_notes.txt
+#   ./diary.sh updateall
 #
 # Make it executable:
 #   chmod +x diary.sh
@@ -107,7 +119,7 @@ fi
 # Dependency Check
 ###############################################################################
 check_dependencies() {
-  required_cmds='date grep awk cut sed cp tail mkdir touch rm mv iconv cat wc sort head find printf tar'
+  required_cmds='date grep awk cut sed cp tail mkdir touch rm mv iconv cat wc sort head find printf tar shred mktemp gpg'
   for cmd in $required_cmds; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
       echo "Error: Required command '$cmd' not found in PATH." >&2
@@ -144,19 +156,22 @@ usage() {
 Usage: $0 <command> [arguments]
 
 Commands:
-  create <filename.txt>                Create a new diary entry (must meet validation criteria).
+  create <filename.txt>                Create a new diary entry.
   edit <filename.txt>                  Edit an existing diary entry.
   check <filename.txt>                 Verify the SHA-512 hash of an entry.
   backup <filename.txt>                Backup an entry to the Diary/backup directory.
   update <filename.txt>                Re-hash a file changed outside the script.
-  update <oldname.txt> <newname.txt>   Rename and re-hash a file changed outside the script.
-  search <pattern>                     Search all .txt files (case-insensitive, recursive).
-  audit [objective]                    Verify integrity of all .txt files at once; optional objective.
+  rename <oldname.txt> <newname.txt>   Rename and re-hash an entry.
+  search <pattern>                     Search all .txt entries (case-insensitive).
+  audit [objective]                    Verify integrity of all .txt files at once.
   stats                                Show total file count, total size, and creation dates.
   logs                                 View the diary log (CSV).
-  compress [archive_file]              Compress the entire Diary directory using tar & ZSTD,
-                                       producing an archive and a corresponding SHA-512 hash file.
+  compress [archive_file]              Compress the entire Diary directory using tar & ZSTD.
   decompress <archive_file>            Verify and decompress the provided Diary archive.
+  delete <filename.txt>                Securely delete a diary entry (confirmation required).
+  encrypt <filename.txt>               Encrypt a diary entry using GPG.
+  decrypt <filename.txt>               Decrypt a diary entry using GPG.
+  updateall                          Update (re-hash) all .txt diary entries.
   help                                 Show this help message.
 
 EOF
@@ -196,115 +211,69 @@ normalize_utf8() {
 }
 
 ###############################################################################
-# Compression & Decompression Functions
+# Encrypt & Decrypt Functions (Improved version)
 ###############################################################################
-compress_diary() {
-  if ! command -v zstd >/dev/null 2>&1; then
-    echo "Error: 'zstd' is required for compression but is not installed." >&2
+encrypt_entry() {
+  filename="$1"
+  validate_txt_extension "${filename}"
+  filepath="${ENTRIES_DIR}/${filename}"
+  if [ ! -f "${filepath}" ]; then
+    echo "Error: File '${filename}' not found." >&2
     exit 1
   fi
-
-  if [ "$#" -gt 1 ]; then
-    echo "Error: 'compress' accepts at most one argument (the output archive file name)." >&2
-    usage
-  fi
-
-  archive_file="${1:-}"
-  if [ -n "${archive_file}" ]; then
-    validate_archive_filename "${archive_file}"
-  else
-    timestamp="$(date '+%Y%m%dT%H%M%S')"
-    archive_file="Diary_archive_${timestamp}.tar.zst"
-  fi
-
-  # Se o arquivo de archive já existir, gera um nome alternativo com um número aleatório.
-  if [ -e "${archive_file}" ]; then
-    timestamp="$(date '+%Y%m%dT%H%M%S')"
-    random=$(printf "%04d" $((RANDOM % 10000)))
-    archive_file="Diary_archive_${timestamp}_${random}.tar.zst"
-  fi
-
-  echo "Compressing '${DIARY_BASE}' into '${archive_file}' using tar and zstd..."
-  tar -cf - "${DIARY_BASE}" | zstd -T0 -o "${archive_file}"
+  # Read passphrase
+  stty -echo
+  printf "Enter encryption passphrase: "
+  read passw
+  stty echo
+  printf "\n"
+  gpg --batch --yes --passphrase "${passw}" --pinentry-mode loopback -c "${filepath}"
   if [ $? -ne 0 ]; then
-    echo "Error: Compression failed." >&2
+    echo "Error: Encryption failed." >&2
+    unset passw
     exit 1
   fi
-
-  archive_hash="$(compute_hash "${archive_file}")"
-  hash_file="${archive_file}.sha512"
-  echo "${archive_hash}" > "${hash_file}"
-  if [ $? -ne 0 ]; then
-    echo "Error: Failed to write SHA-512 hash file." >&2
-    exit 1
-  fi
-
-  echo "Compression complete."
-  echo "Archive: ${archive_file}"
-  echo "SHA-512 hash stored in: ${hash_file}"
+  unset passw
+  log_action "ENCRYPT" "${filename}" "$(get_file_size "${filepath}")" "" "ENCRYPTED"
+  echo "File '${filename}' encrypted successfully. Encrypted file: '${filepath}.gpg'"
 }
 
-decompress_diary() {
-  if ! command -v zstd >/dev/null 2>&1; then
-    echo "Error: 'zstd' is required for decompression but is not installed." >&2
+decrypt_entry() {
+  # Allow the user to specify either the base name (ending in .txt) or the encrypted
+  # name (ending in .txt.gpg). If the argument ends with .gpg, strip the extension.
+  filename="$1"
+  case "$filename" in
+    *.gpg)
+      filename="${filename%.gpg}"
+      ;;
+  esac
+  validate_txt_extension "${filename}"
+  encrypted_file="${ENTRIES_DIR}/${filename}.gpg"
+  if [ ! -f "${encrypted_file}" ]; then
+    echo "Error: Encrypted file '${filename}.gpg' not found." >&2
     exit 1
   fi
-
-  if [ "$#" -ne 1 ]; then
-    echo "Error: 'decompress' requires exactly one argument: the archive file." >&2
-    usage
-  fi
-
-  archive_file="$1"
-  validate_archive_filename "${archive_file}"
-
-  if [ ! -f "${archive_file}" ]; then
-    echo "Error: Archive file '${archive_file}' not found." >&2
+  # Read passphrase silently using read -s and then unset it
+  printf "Enter decryption passphrase: "
+  stty -echo
+  read passw
+  stty echo
+  printf "\n"
+  output_file="${ENTRIES_DIR}/${filename}"
+  gpg --batch --yes --passphrase "$passw" --pinentry-mode loopback -o "${output_file}" -d "${encrypted_file}"
+  if [ $? -ne 0 ]; then
+    echo "Error: Decryption failed. Bad session key or incorrect passphrase." >&2
+    unset passw
     exit 1
   fi
-
-  hash_file="${archive_file}.sha512"
-  if [ ! -f "${hash_file}" ]; then
-    echo "Error: SHA-512 hash file '${hash_file}' not found; cannot verify integrity." >&2
-    exit 1
-  fi
-
-  echo "Verifying integrity of '${archive_file}'..."
-  computed_hash="$(compute_hash "${archive_file}")"
-  stored_hash="$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "${hash_file}")"
-  
-  if [ "${computed_hash}" != "${stored_hash}" ]; then
-    echo "Warning: SHA-512 verification failed! Proceeding with extraction." >&2
-    log_action "DECOMPRESS" "${archive_file}" "N/A" "SHA512 mismatch" "${computed_hash}"
-  else
-    echo "Integrity check passed."
-  fi
-
-  # Se o diretório DIARY_BASE já existir, extrai para um novo diretório com nome alternativo.
-  if [ -d "${DIARY_BASE}" ]; then
-    timestamp="$(date '+%Y%m%dT%H%M%S')"
-    random=$(printf "%04d" $((RANDOM % 10000)))
-    new_dir="Diary_archive_${timestamp}_${random}"
-    echo "Target directory '${DIARY_BASE}' exists. Extracting archive into '${new_dir}' instead..."
-    tar --xform "s,^${DIARY_BASE},${new_dir}," -I zstd -xf "${archive_file}"
-    if [ $? -ne 0 ]; then
-      echo "Error: Decompression failed." >&2
-      exit 1
-    fi
-    echo "Decompression complete. Directory extracted as '${new_dir}'."
-  else
-    echo "Extracting '${archive_file}'..."
-    tar -I zstd -xf "${archive_file}"
-    if [ $? -ne 0 ]; then
-      echo "Error: Decompression failed." >&2
-      exit 1
-    fi
-    echo "Decompression complete. The '${DIARY_BASE}' directory has been restored."
-  fi
+  unset passw
+  normalize_utf8 "${output_file}"
+  log_action "DECRYPT" "${filename}" "$(get_file_size "${output_file}")" "" "DECRYPTED"
+  echo "File '${filename}.gpg' decrypted successfully and restored to '${filename}'."
 }
 
 ###############################################################################
-# Command Implementations
+# Remaining Command Implementations
 ###############################################################################
 create_entry() {
   filename="$1"
@@ -355,8 +324,7 @@ check_entry() {
   filepath="${ENTRIES_DIR}/${filename}"
   current_hash="$(compute_hash "${filepath}")"
 
-  last_logged_hash="$(grep ",\"${filename}\"," "${LOG_FILE}" 2>/dev/null \
-    | tail -n 1 | awk -F, '{print $6}' | tr -d '"')"
+  last_logged_hash="$(grep ",\"${filename}\"," "${LOG_FILE}" 2>/dev/null | tail -n 1 | awk -F, '{print $6}' | tr -d '"')"
 
   if [ -z "${last_logged_hash}" ]; then
     echo "Warning: No previous hash found in log for '${filename}'."
@@ -416,36 +384,76 @@ update_entry() {
     echo "File '${filename}' updated."
     echo "New hash: ${new_hash}"
     echo "File size (bytes): ${new_size}"
-  elif [ $# -eq 2 ]; then
-    oldname="$1"
-    newname="$2"
-    validate_txt_extension "${oldname}"
-    validate_txt_extension "${newname}"
-
-    oldpath="${ENTRIES_DIR}/${oldname}"
-    newpath="${ENTRIES_DIR}/${newname}"
-
-    if [ ! -f "${oldpath}" ]; then
-      echo "Error: File '${oldname}' not found." >&2
-      exit 1
-    fi
-    if [ -f "${newpath}" ]; then
-      echo "Error: Cannot rename to '${newname}' (already exists)." >&2
-      exit 1
-    fi
-
-    mv -- "${oldpath}" "${newpath}"
-    normalize_utf8 "${newpath}"
-    new_hash="$(compute_hash "${newpath}")"
-    new_size="$(get_file_size "${newpath}")"
-
-    log_action "UPDATE" "${newname}" "${new_size}" "" "${new_hash}"
-    echo "File renamed from '${oldname}' to '${newname}'."
-    echo "New hash: ${new_hash}"
-    echo "File size (bytes): ${new_size}"
   else
+    echo "Error: 'update' requires exactly 1 argument." >&2
     usage
   fi
+}
+
+rename_entry() {
+  if [ "$#" -ne 2 ]; then
+    echo "Error: 'rename' requires exactly 2 arguments." >&2
+    usage
+  fi
+  oldname="$1"
+  newname="$2"
+  validate_txt_extension "${oldname}"
+  validate_txt_extension "${newname}"
+
+  oldpath="${ENTRIES_DIR}/${oldname}"
+  newpath="${ENTRIES_DIR}/${newname}"
+
+  if [ ! -f "${oldpath}" ]; then
+    echo "Error: File '${oldname}' not found." >&2
+    exit 1
+  fi
+  if [ -f "${newpath}" ]; then
+    echo "Error: Cannot rename to '${newname}' (already exists)." >&2
+    exit 1
+  fi
+
+  mv -- "${oldpath}" "${newpath}"
+  normalize_utf8 "${newpath}"
+  new_hash="$(compute_hash "${newpath}")"
+  new_size="$(get_file_size "${newpath}")"
+
+  log_action "RENAME" "${newname}" "${new_size}" "" "${new_hash}"
+  echo "File renamed from '${oldname}' to '${newname}'."
+  echo "New SHA-512: ${new_hash}"
+  echo "File size (bytes): ${new_size}"
+}
+
+delete_entry() {
+  filename="$1"
+  validate_txt_extension "${filename}"
+  check_file_exists "${filename}"
+  filepath="${ENTRIES_DIR}/${filename}"
+  echo "Are you sure you want to permanently delete '${filename}'? Press ENTER to confirm or Ctrl+C to cancel."
+  read -r dummy
+  echo "Securely deleting '${filename}' using shred..."
+  shred -n 10 -z -u -v "${filepath}"
+  if [ $? -ne 0 ]; then
+    echo "Error: Secure deletion failed for '${filename}'." >&2
+    exit 1
+  fi
+  log_action "DELETE" "${filename}" "0" "" "DELETED"
+  echo "File '${filename}' securely deleted."
+}
+
+update_all_entries() {
+  echo "Updating all diary entries in '${ENTRIES_DIR}'..."
+  count=0
+  for file in "${ENTRIES_DIR}"/*.txt; do
+    [ ! -f "${file}" ] && continue
+    normalize_utf8 "${file}"
+    new_hash="$(compute_hash "${file}")"
+    new_size="$(get_file_size "${file}")"
+    filename="$(basename "${file}")"
+    log_action "UPDATEALL" "${filename}" "${new_size}" "" "${new_hash}"
+    echo "Updated: ${filename} | SHA-512: ${new_hash}"
+    count=$((count + 1))
+  done
+  echo "Total files updated: ${count}"
 }
 
 search_entries() {
@@ -474,8 +482,7 @@ audit_entries() {
     [ ! -e "${filepath}" ] && continue
     filename="$(basename "${filepath}")"
     current_hash="$(compute_hash "${filepath}")"
-    last_logged_hash="$(grep ",\"${filename}\"," "${LOG_FILE}" 2>/dev/null \
-      | tail -n 1 | awk -F, '{print $6}' | tr -d '"')"
+    last_logged_hash="$(grep ",\"${filename}\"," "${LOG_FILE}" 2>/dev/null | tail -n 1 | awk -F, '{print $6}' | tr -d '"')"
 
     if [ -z "${last_logged_hash}" ]; then
       echo "  [WARNING] ${filename}: No logged hash found (unlogged file?)."
@@ -549,10 +556,10 @@ logs_action() {
 command="$1"
 shift
 
-# Para os comandos que NÃO envolvem a descompactação, garante a criação dos diretórios.
+# For all commands except decompression, ensure required directories exist.
 case "${command}" in
   decompress)
-    ;; 
+    ;;
   *)
     mkdir -p "${ENTRIES_DIR}" "${LOG_DIR}"
     ;;
@@ -576,8 +583,28 @@ case "${command}" in
     backup_entry "$1"
     ;;
   update)
-    [ $# -lt 1 ] && { echo "Error: 'update' requires 1 or 2 arguments."; usage; }
-    update_entry "$@"
+    [ $# -ne 1 ] && { echo "Error: 'update' requires exactly 1 argument."; usage; }
+    update_entry "$1"
+    ;;
+  rename)
+    [ $# -ne 2 ] && { echo "Error: 'rename' requires exactly 2 arguments."; usage; }
+    rename_entry "$1" "$2"
+    ;;
+  delete)
+    [ $# -ne 1 ] && { echo "Error: 'delete' requires exactly 1 argument."; usage; }
+    delete_entry "$1"
+    ;;
+  encrypt)
+    [ $# -ne 1 ] && { echo "Error: 'encrypt' requires exactly 1 argument."; usage; }
+    encrypt_entry "$1"
+    ;;
+  decrypt)
+    [ $# -ne 1 ] && { echo "Error: 'decrypt' requires exactly 1 argument."; usage; }
+    decrypt_entry "$1"
+    ;;
+  updateall)
+    [ $# -ne 0 ] && { echo "Error: 'updateall' does not accept any arguments."; usage; }
+    update_all_entries
     ;;
   search)
     [ $# -lt 1 ] && { echo "Error: 'search' requires a pattern."; usage; }
