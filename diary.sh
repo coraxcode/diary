@@ -220,6 +220,114 @@ normalize_utf8() {
 }
 
 ###############################################################################
+# Compression & Decompression Functions
+###############################################################################
+compress_diary() {
+  if ! command -v zstd >/dev/null 2>&1; then
+    echo "Error: 'zstd' is required for compression but is not installed." >&2
+    exit 1
+  fi
+
+  if [ "$#" -gt 1 ]; then
+    echo "Error: 'compress' accepts at most one argument (the output archive file name)." >&2
+    usage
+  fi
+
+  archive_file="${1:-}"
+  if [ -n "${archive_file}" ]; then
+    validate_archive_filename "${archive_file}"
+  else
+    timestamp="$(date '+%Y%m%dT%H%M%S')"
+    archive_file="Diary_archive_${timestamp}.tar.zst"
+  fi
+
+  # If the archive file already exists, generate an alternative name with a random number.
+  if [ -e "${archive_file}" ]; then
+    timestamp="$(date '+%Y%m%dT%H%M%S')"
+    random=$(printf "%04d" $((RANDOM % 10000)))
+    archive_file="Diary_archive_${timestamp}_${random}.tar.zst"
+  fi
+
+  echo "Compressing '${DIARY_BASE}' into '${archive_file}' using tar and zstd..."
+  tar -cf - "${DIARY_BASE}" | zstd -T0 -o "${archive_file}"
+  if [ $? -ne 0 ]; then
+    echo "Error: Compression failed." >&2
+    exit 1
+  fi
+
+  archive_hash="$(compute_hash "${archive_file}")"
+  hash_file="${archive_file}.sha512"
+  echo "${archive_hash}" > "${hash_file}"
+  if [ $? -ne 0 ]; then
+    echo "Error: Failed to write SHA-512 hash file." >&2
+    exit 1
+  fi
+
+  echo "Compression complete."
+  echo "Archive: ${archive_file}"
+  echo "SHA-512 hash stored in: ${hash_file}"
+}
+
+decompress_diary() {
+  if ! command -v zstd >/dev/null 2>&1; then
+    echo "Error: 'zstd' is required for decompression but is not installed." >&2
+    exit 1
+  fi
+
+  if [ "$#" -ne 1 ]; then
+    echo "Error: 'decompress' requires exactly one argument: the archive file." >&2
+    usage
+  fi
+
+  archive_file="$1"
+  validate_archive_filename "${archive_file}"
+
+  if [ ! -f "${archive_file}" ]; then
+    echo "Error: Archive file '${archive_file}' not found." >&2
+    exit 1
+  fi
+
+  hash_file="${archive_file}.sha512"
+  if [ ! -f "${hash_file}" ]; then
+    echo "Error: SHA-512 hash file '${hash_file}' not found; cannot verify integrity." >&2
+    exit 1
+  fi
+
+  echo "Verifying integrity of '${archive_file}'..."
+  computed_hash="$(compute_hash "${archive_file}")"
+  stored_hash="$(sed 's/^[[:space:]]*//;s/[[:space:]]*$//' "${hash_file}")"
+  
+  if [ "${computed_hash}" != "${stored_hash}" ]; then
+    echo "Warning: SHA-512 verification failed! Proceeding with extraction." >&2
+    log_action "DECOMPRESS" "${archive_file}" "N/A" "SHA512 mismatch" "${computed_hash}"
+  else
+    echo "Integrity check passed."
+  fi
+
+  # If the DIARY_BASE directory already exists, extract to a new directory with an alternative name.
+  if [ -d "${DIARY_BASE}" ]; then
+    timestamp="$(date '+%Y%m%dT%H%M%S')"
+    random=$(printf "%04d" $((RANDOM % 10000)))
+    new_dir="Diary_archive_${timestamp}_${random}"
+    echo "Target directory '${DIARY_BASE}' exists. Extracting archive into '${new_dir}' instead..."
+    tar --xform "s,^${DIARY_BASE},${new_dir}," -I zstd -xf "${archive_file}"
+    if [ $? -ne 0 ]; then
+      echo "Error: Decompression failed." >&2
+      exit 1
+    fi
+    echo "Decompression complete. Directory extracted as '${new_dir}'."
+  else
+    echo "Extracting '${archive_file}'..."
+    tar -I zstd -xf "${archive_file}"
+    if [ $? -ne 0 ]; then
+      echo "Error: Decompression failed." >&2
+      exit 1
+    fi
+    echo "Decompression complete. The '${DIARY_BASE}' directory has been restored."
+  fi
+}
+
+###############################################################################
 # Encrypt & Decrypt Functions (Improved version)
 ###############################################################################
 encrypt_entry() {
