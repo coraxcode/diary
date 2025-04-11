@@ -70,7 +70,16 @@
 # Then run:
 #   ./diary.sh <command> [arguments]
 ###############################################################################
-
+# Recommendation
+# For enhanced security when compressing files, we recommend using a password-protected compression method. To achieve this, execute the following commands:
+#
+# To compress the files with password protection:
+# 7z a -t7z -mhe=on -pYOUR_PASSWORD archives_secure.7z archives/
+#
+# To extract the compressed archive:
+# 7z x archive_secure.7z
+#
+# Please ensure that the password (YOUR_PASSWORD) is stored securely and is not disclosed in unsecured environments.
 ###############################################################################
 # Strict Shell Settings
 ###############################################################################
